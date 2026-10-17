@@ -1,6 +1,4 @@
 use crate::fprintf::StringWriter;
-use crate::image::*;
-use crate::openjpeg::*;
 
 use super::*;
 

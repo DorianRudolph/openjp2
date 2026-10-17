@@ -52,6 +52,7 @@ impl StringWriter for std::io::Stderr {
   }
 }
 
+#[allow(unused_macros)] // used by the file-io dump functions
 macro_rules! fprintf {
   ($writer:expr, $($fmt:expr),* $(,)?) => {
     {
