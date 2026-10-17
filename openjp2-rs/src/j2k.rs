@@ -7587,10 +7587,16 @@ pub(crate) fn opj_j2k_setup_encoder(
       memcpy((*cp).comment as _, parameters.cp_comment as _, len);
     } else {
       /* Create default comment for codestream */
+      // Allocate with opj_malloc: the comment is released with opj_free in
+      // opj_j2k_cp_destroy, and a CString::into_raw pointer must not reach C free.
       let comment = format!("Created by OpenJPEG version {}", OPJ_VERSION);
-      let c_comment = std::ffi::CString::new(comment).unwrap();
+      let len = comment.len();
+      (*cp).comment = opj_malloc(len + 1) as *mut core::ffi::c_char;
+      if !(*cp).comment.is_null() {
+        memcpy((*cp).comment as _, comment.as_ptr() as _, len);
+        *(*cp).comment.add(len) = 0;
+      }
       /* UniPG>> */
-      (*cp).comment = c_comment.into_raw();
       if (*cp).comment.is_null() {
         event_msg!(
           p_manager,

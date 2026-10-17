@@ -16,7 +16,8 @@ mod types;
 #[macro_use]
 mod event;
 
-#[cfg(feature = "file-io")]
+// The StringWriter trait is used by the dump functions in every configuration; only the
+// libc / std::fs implementations inside the module depend on `file-io`.
 #[macro_use]
 mod fprintf;
 

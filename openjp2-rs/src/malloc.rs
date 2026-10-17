@@ -1,6 +1,7 @@
 #[cfg(not(any(feature = "c_api", feature = "test_malloc")))]
 use std::alloc::{alloc, alloc_zeroed, dealloc, Layout};
 
+#[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
 extern "C" {
 
   fn malloc(_: usize) -> *mut core::ffi::c_void;
@@ -11,6 +12,71 @@ extern "C" {
 
   fn free(_: *mut core::ffi::c_void);
 }
+
+/// `wasm32-unknown-unknown` has no libc: provide the C allocator API on top of Rust's
+/// global allocator. Each block carries a 16-byte header holding its size, which
+/// `realloc` and `free` need to rebuild the `Layout`.
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+mod wasm_alloc {
+  use std::alloc::{alloc, alloc_zeroed, dealloc, realloc as rust_realloc, Layout};
+
+  const HEADER: usize = 16;
+
+  fn layout(size: usize) -> Option<Layout> {
+    Layout::from_size_align(size.checked_add(HEADER)?, HEADER).ok()
+  }
+
+  unsafe fn finish(base: *mut u8, size: usize) -> *mut core::ffi::c_void {
+    if base.is_null() {
+      return core::ptr::null_mut();
+    }
+    (base as *mut usize).write(size);
+    base.add(HEADER) as *mut core::ffi::c_void
+  }
+
+  unsafe fn header(ptr: *mut core::ffi::c_void) -> (*mut u8, usize) {
+    let base = (ptr as *mut u8).sub(HEADER);
+    (base, (base as *const usize).read())
+  }
+
+  pub(super) unsafe fn malloc(size: usize) -> *mut core::ffi::c_void {
+    match layout(size) {
+      Some(l) => finish(alloc(l), size),
+      None => core::ptr::null_mut(),
+    }
+  }
+
+  pub(super) unsafe fn calloc(num: usize, size: usize) -> *mut core::ffi::c_void {
+    match num.checked_mul(size).and_then(|total| Some((total, layout(total)?))) {
+      Some((total, l)) => finish(alloc_zeroed(l), total),
+      None => core::ptr::null_mut(),
+    }
+  }
+
+  pub(super) unsafe fn realloc(ptr: *mut core::ffi::c_void, new_size: usize) -> *mut core::ffi::c_void {
+    if ptr.is_null() {
+      return malloc(new_size);
+    }
+    let (base, old_size) = header(ptr);
+    match (layout(old_size), layout(new_size)) {
+      (Some(old), Some(_)) => finish(rust_realloc(base, old, new_size + HEADER), new_size),
+      _ => core::ptr::null_mut(),
+    }
+  }
+
+  pub(super) unsafe fn free(ptr: *mut core::ffi::c_void) {
+    if ptr.is_null() {
+      return;
+    }
+    let (base, size) = header(ptr);
+    if let Some(l) = layout(size) {
+      dealloc(base, l);
+    }
+  }
+}
+
+#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
+use wasm_alloc::{calloc, free, malloc, realloc};
 
 pub(crate) fn memcpy(
   dest: *mut core::ffi::c_void,
